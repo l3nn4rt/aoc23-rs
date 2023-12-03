@@ -36,6 +36,16 @@ impl Hand {
             Hand { red: r, green: g, blue: b }
         }).collect()
     }
+
+    fn get_requirements(hands: &Vec<Hand>) -> Hand {
+        let mut required = Hand { red: 0, green: 0, blue: 0 };
+        for hand in hands {
+            required.red   = i32::max(hand.red,   required.red);
+            required.green = i32::max(hand.green, required.green);
+            required.blue  = i32::max(hand.blue,  required.blue);
+        }
+        required
+    }
 }
 
 fn main() {
@@ -71,6 +81,7 @@ fn main() {
         r"(?<hand>({}|{}|{}),?)+(;|$)", _r, _g, _b).as_str()).unwrap();
 
     let mut sum: i32 = 0;
+    let mut power_sum: i32 = 0;
     for line in contents.split('\n') {
         let id = match re_id.captures(line) {
             Some(r) => r["id"].parse::<i32>().unwrap(),
@@ -81,7 +92,11 @@ fn main() {
         if hands.iter().all(|h| h.is_possible()) {
             sum += id;
         }
+
+        let req = Hand::get_requirements(&hands);
+        power_sum += req.red * req.green * req.blue;
     }
 
     println!("sum: {:?} ", sum);
+    println!("power sum: {:?} ", power_sum);
 }
