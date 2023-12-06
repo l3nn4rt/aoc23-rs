@@ -1,13 +1,15 @@
 use regex::Regex;
+use std::collections::HashSet;
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 
 #[derive(Debug)]
-struct Layer {
-    m: Vec<Vec<bool>>
+struct Layer<T> {
+    m: Vec<Vec<T>>
 }
 
+#[derive(Clone)]
 #[derive(Debug)]
 struct Token<T> {
     tok: T,
@@ -40,8 +42,10 @@ impl FromMatch for Sym {
 
 #[derive(Debug)]
 struct Schematic {
+    gears: Vec<Sym>,
     numbers: Vec<Num>,
-    symbol_layer: Layer,
+    number_layer: Layer<Option<usize>>,
+    symbol_layer: Layer<bool>,
 }
 
 #[derive(Debug)]
@@ -63,7 +67,7 @@ impl Rectangle {
 }
 
 impl Schematic {
-    fn covered_rectangle(&self, n: &Num) -> Rectangle {
+    fn covered_rectangle<T>(&self, n: &Token<T>) -> Rectangle {
         let x_min = if n.x0 == 0 { 0 } else { n.x0 - 1 };
         let x_max = usize::min(n.x1 + 1, self.symbol_layer.m[0].len());
         let y_min = if n.y == 0 { 0 } else { n.y - 1 };
@@ -76,6 +80,29 @@ impl Schematic {
         rect.to_coords_yx().iter().any(|(j, i)|
             self.symbol_layer.m[*j][*i]
         )
+    }
+
+    fn get_numbers_on_rectangle(&self, rect: Rectangle) -> Vec<&Num> {
+        let mut s = HashSet::new();
+        let mut v = vec![];
+
+        for (y, x) in rect.to_coords_yx() {
+            match self.number_layer.m[y][x] {
+                Some(idx) => {
+                    if !s.contains(&idx) {
+                        s.insert(idx);
+                        v.push(&self.numbers[idx]);
+                    }
+                },
+                None => continue
+            };
+        }
+        v
+    }
+
+    fn get_adjacent_numbers(&self, s: &Sym) -> Vec<&Num> {
+        let rect = self.covered_rectangle(s);
+        self.get_numbers_on_rectangle(rect)
     }
 
     fn get_part_numbers(&self) -> impl Iterator<Item = &Num> {
@@ -114,7 +141,9 @@ fn main() {
     let re_num = Regex::new(r"\d+").unwrap();
     let re_sym = Regex::new(r"[^\.\d]").unwrap();
 
+    let mut gears: Vec<Sym> = vec![];
     let mut numbers: Vec<Num> = vec![];
+    let mut number_layer = Layer { m: vec![] };
     let mut symbol_layer = Layer { m: vec![] };
 
     for (j, line) in contents.split('\n').into_iter().enumerate() {
@@ -126,10 +155,12 @@ fn main() {
         let syms: Vec<Sym> = get_tokens(&re_sym, j, &line);
         //println!("{}  {} nums, {} syms", line, nums.len(), syms.len());
 
-        let mut nmask = vec![false; line.len()];
-        for t in &nums {
+        let numbers_count = numbers.len();
+        let mut nmask = vec![std::option::Option::None; line.len()];
+        for (k, t) in nums.iter().enumerate() {
             for i in t.x0..t.x1 {
-                nmask[i] = true;
+                let idx = numbers_count + k;
+                nmask[i] = Some(idx);
             }
         }
 
@@ -137,20 +168,34 @@ fn main() {
         for t in &syms {
             for i in t.x0..t.x1 {
                 smask[i] = true;
-                assert!(!nmask[i], "[{}, {}] was number; ambiguous {:?}", j, i, t);
+                assert!(match nmask[i] {
+                    Some(_) => false,
+                    None => true
+                } , "[{}, {}] was number; ambiguous {:?}", j, i, t);
+            }
+            if t.tok == '*' {
+                gears.push(t.to_owned());
             }
         }
 
         numbers.extend(nums);
+        number_layer.m.push(nmask);
         symbol_layer.m.push(smask);
     }
 
-    let schematic = Schematic { numbers, symbol_layer };
+    let schematic = Schematic { gears, numbers, number_layer, symbol_layer };
 
-    let sum: i32 = schematic
+    let pn_sum: i32 = schematic
         .get_part_numbers()
         .map(|p| p.tok)
         .sum();
 
-    println!("sum: {:?}", sum);
+    let gear_sum: i32 = schematic.gears.iter()
+        .map(|g| schematic.get_adjacent_numbers(g))
+        .filter(|ns| ns.len() == 2)
+        .map(|ns| ns[0].tok * ns[1].tok)
+        .sum();
+
+    println!("part numbers sum: {:?}", pn_sum);
+    println!("gear ratios sum: {:?}", gear_sum);
 }
