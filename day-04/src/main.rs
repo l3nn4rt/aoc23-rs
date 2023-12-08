@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
 use std::fs::File;
@@ -24,16 +25,26 @@ fn main() {
     };
 
     // captures named groups:
+    // - "c", matching the card number
     // - "w", matching winning numbers
     // - "o", matching owned numbers
-    let re = Regex::new(r"^Card\s*\d+:(?<w>[\s\d]+)\|(?<o>[\s\d]+)$").unwrap();
+    let re = Regex::new(r"^Card\s*(?<c>\d+):(?<w>[\s\d]+)\|(?<o>[\s\d]+)$").unwrap();
 
-    let mut sum: usize = 0;
+    let mut card_count = HashMap::new();
+
     for line in contents.split('\n') {
         let c = match re.captures(line) {
             Some(c) => c,
             None => continue,
         };
+
+        let card: usize = c["c"].parse().unwrap();
+
+        let card_copies = 1 + match card_count.get(&card) {
+            Some(n) => *n,
+            None => 0
+        };
+        card_count.insert(card, card_copies);
 
         let win_nums: HashSet<i32> = c["w"]
             .split(' ')
@@ -45,11 +56,17 @@ fn main() {
             .filter_map(|s| s.parse().ok())
             .collect();
 
-        let count = HashSet::intersection(&win_nums, &own_nums).count();
-        let value = if count > 0 { 1 << (count - 1) } else { 0 };
+        let matching_numbers = HashSet::intersection(&win_nums, &own_nums).count();
 
-        sum += value;
+        for next in (card + 1)..(card + matching_numbers + 1) {
+            let next_copies = match card_count.get(&next) {
+                Some(n) => *n,
+                None => 0
+            };
+            card_count.insert(next, card_copies + next_copies);
+        }
     }
 
-    println!("sum: {:?}", sum);
+    let cards: i32 = card_count.values().sum();
+    println!("cards: {:?}", cards);
 }
