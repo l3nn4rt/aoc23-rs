@@ -1,13 +1,48 @@
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 
-fn parse_seeds(value: &str) -> Option<Vec<i64>> {
+#[derive(Clone)]
+#[derive(Debug)]
+struct AlmanacRange {
+    start: i64,
+    count: i64
+}
+
+impl AlmanacRange {
+    fn split(&self, left_cut: i64, right_cut: i64) ->
+            (Option<AlmanacRange>, Option<AlmanacRange>, Option<AlmanacRange>) {
+        let lstart = self.start;
+        let lstop = i64::min(left_cut, self.start + self.count);
+        let lcount = i64::max(0, lstop - lstart);
+
+        let cstart = i64::max(left_cut, self.start);
+        let cstop = i64::min(right_cut, self.start + self.count);
+        let ccount = i64::max(0, cstop - cstart);
+
+        let rstart = i64::max(right_cut, self.start);
+        let rstop = self.start + self.count;
+        let rcount = i64::max(0, rstop - rstart);
+
+        assert_eq!(self.count, lcount + ccount + rcount);
+        (
+            if lcount > 0 { Some(AlmanacRange { start: lstart, count: lcount }) } else { None },
+            if ccount > 0 { Some(AlmanacRange { start: cstart, count: ccount }) } else { None },
+            if rcount > 0 { Some(AlmanacRange { start: rstart, count: rcount }) } else { None },
+        )
+    }
+}
+
+fn parse_seed_ranges(value: &str) -> Option<Vec<AlmanacRange>> {
     match value.strip_prefix("seeds: ") {
         Some(s) => Some(s
             .split(' ')
             .filter_map(|s| s.parse().ok())
+            .collect::<Vec<i64>>()
+            .chunks(2)
+            .map(|c| AlmanacRange { start: c[0], count: c[1] })
             .collect()),
         None => None
     }
@@ -34,14 +69,48 @@ impl AlmanacMap {
         let _ = &self.ranges.push(offset);
     }
 
-    fn apply(&self, src_id: i64) -> i64 {
-        for range in &self.ranges {
-            let within = range.src_start <= src_id && src_id < range.src_start + range.count;
-            if within {
-                return src_id + range.dst_start - range.src_start;
+    fn apply(&self, src_ranges: Vec<AlmanacRange>) -> Vec<AlmanacRange> {
+        let mut dst_ranges: Vec<AlmanacRange> = vec![];
+        let mut src_ranges = VecDeque::from(src_ranges);
+
+        for mr in &self.ranges {
+            let (lcut, rcut) = (mr.src_start, mr.src_start + mr.count);
+
+            let mut unmapped: Vec<AlmanacRange> = vec![];
+            while let Some(sr) = src_ranges.pop_front() {
+                // Use map range boundaries to cut the source range:
+                // the center part does overlap with it, so must be
+                // mapped, while left and right parts won't change.
+                let (left, center, right) = sr.split(lcut, rcut);
+
+                if let Some(r) = center {
+                    let mapped = AlmanacRange {
+                        start: r.start + mr.dst_start - mr.src_start,
+                        count: r.count
+                    };
+                    dst_ranges.push(mapped);
+                }
+
+                if let Some(r) = left {
+                    unmapped.push(r);
+                }
+
+                if let Some(r) = right {
+                    unmapped.push(r);
+                }
             }
+
+            // Source ranges (or their parts) which could not be mapped
+            // through the current map range may still be successfully
+            // mapped with the next one, so put them back into the queue.
+            src_ranges.extend(unmapped);
         }
-        src_id
+
+        // The ranges (or their parts) still in the queue, could not
+        // be mapped by any map range, and will remain unchanged.
+        dst_ranges.extend(src_ranges);
+
+        dst_ranges
     }
 }
 
@@ -102,8 +171,8 @@ impl Almanac {
         self.src_dst_map.insert((src.to_owned(), dst.to_owned()), map);
     }
 
-    fn map(&self, src: &str, dst: &str, src_id: i64) -> Option<i64> {
-        let mut id = src_id.clone();
+    fn map(&self, src: &str, dst: &str, src_range: AlmanacRange) -> Option<Vec<AlmanacRange>> {
+        let mut ids = vec![src_range.clone()];
         let mut curr = src.to_owned();
 
         while &curr != &dst {
@@ -112,10 +181,10 @@ impl Almanac {
             let src_dst = &(curr.to_owned(), next.to_owned());
             let map = self.src_dst_map.get(src_dst).unwrap();
 
-            id = map.apply(id);
+            ids = map.apply(ids);
             curr = next;
         }
-        Some(id)
+        Some(ids)
     }
 }
 
@@ -138,13 +207,13 @@ fn main() {
         Err(e) => { eprintln!("{}", e); return; },
     };
 
-    let mut seeds: Vec<i64> = vec![];
+    let mut seed_ranges: Vec<AlmanacRange> = vec![];
     let mut almanac = Almanac::new();
 
     for (i, section) in content.split("\n\n").enumerate() {
         if section.starts_with("seeds: ") {
-            match parse_seeds(section) {
-                Some(v) => seeds = v,
+            match parse_seed_ranges(section) {
+                Some(v) => seed_ranges = v,
                 None => ()
             };
         } else if section.split('\n').nth(0).unwrap().ends_with(" map:") {
@@ -158,9 +227,16 @@ fn main() {
         }
     }
 
-    let min_loc = seeds.iter()
-        .filter_map(|s| almanac.map("seed", "location", *s))
-        .min().unwrap();
-    println!("Lowest location: {min_loc}");
+    let mapped_seed_ranges: Vec<AlmanacRange> = seed_ranges.iter()
+        .filter_map(|s| almanac.map("seed", "location", s.clone()))
+        .flatten()
+        .collect();
+
+    let min_loc: i64 = mapped_seed_ranges
+        .iter()
+        .map(|r| r.start)
+        .min()
+        .unwrap();
+    println!("Lowest location: {:?}", min_loc);
 
 }
