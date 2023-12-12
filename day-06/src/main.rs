@@ -41,11 +41,13 @@ fn main() {
 
     let times: Vec<i64> = lines[0]
         .split(":").nth(1).unwrap()
+        .replace(" ", "")
         .split(" ").filter_map(|s| s.parse().ok())
         .collect();
 
     let spaces: Vec<i64> = lines[1]
         .split(":").nth(1).unwrap()
+        .replace(" ", "")
         .split(" ").filter_map(|s| s.parse().ok())
         .collect();
 
