@@ -17,7 +17,7 @@ enum HandType {
     FiveOfAKind  = 6,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Hand {
     values: Vec<usize>,
     bid: usize,
@@ -39,12 +39,44 @@ impl Hand {
 
         None::<HandType>.expect("Failed to determine hand type: {self}")
     }
+
+    fn improve(&self) -> Hand {
+        // no jokers (value 0), cannot improve
+        if !self.values.contains(&0) {
+            return self.clone();
+        }
+
+        let not_j_counter: Counter<&usize, usize> = self.values
+            .iter().filter(|v| **v != 0).collect();
+        let mc: Vec<(&usize, usize)> = not_j_counter.most_common();
+
+        let joker: usize = match self.get_type() {
+            // five jokers
+            HandType::FiveOfAKind => 12,
+            // extend the highest pair
+            HandType::TwoPairs => *mc.iter()
+                .filter(|(v, n)| **v != 0 && *n == 2)
+                .map(|(v, _)| *v).max().unwrap(),
+            // emulate highest card and become a pair
+            HandType::HighCard => *self.values.iter().max().unwrap(),
+            // extend the best part of current type
+            _ => *mc[0].0,
+        };
+
+        Hand {
+            values: self.values
+            .iter()
+            .map(|v| if *v == 0 as usize { joker } else { *v })
+            .collect(),
+            bid: self.bid.clone()
+        }
+    }
 }
 
 impl Ord for Hand {
     fn cmp(&self, other: &Self) -> Ordering {
-        if self.get_type() != other.get_type() {
-            return self.get_type().cmp(&other.get_type());
+        if self.improve().get_type() != other.improve().get_type() {
+            return self.improve().get_type().cmp(&other.improve().get_type());
         }
         for (s, o) in zip(&self.values, &other.values) {
             if s != o { return s.cmp(&o); }
@@ -86,8 +118,8 @@ fn main() {
         Err(e) => { eprintln!("{}", e); return },
     };
 
-    let card_value: HashMap<char, usize> = "23456789TJQKA"
-        .chars().enumerate().map(|(i, c)| (c, i + 2)).collect();
+    let card_value: HashMap<char, usize> = "J23456789TQKA"
+        .chars().enumerate().map(|(i, c)| (c, i)).collect();
 
     let mut hands = Vec::<Hand>::new();
     for line in contents.split('\n').filter(|l| l.len() > 0) {
